@@ -2,7 +2,7 @@ import * as db from './db.js';
 import { LANGUAGES, langLabel, suggestLangFromDevice, suggestLangFromCoords } from './i18n.js';
 import { AudioRecorder } from './recorder.js';
 import { Transcriber, isSupported as sttSupported } from './transcriber.js';
-import { summarize, fmtTime } from './summarizer.js';
+import { summarize, localSummarize, fmtTime } from './summarizer.js';
 
 const $ = (id) => document.getElementById(id);
 const el = {
@@ -15,6 +15,8 @@ const el = {
   langSelect: $('langSelect'), detectLangBtn: $('detectLangBtn'),
   waveCanvas: $('waveCanvas'), recTimer: $('recTimer'), recStatus: $('recStatus'),
   liveTranscript: $('liveTranscript'),
+  liveInsights: $('liveInsights'), liveInsightsBody: $('liveInsightsBody'),
+  liveCaptionToggle: $('liveCaptionToggle'),
   recToggleBtn: $('recToggleBtn'), pauseRecBtn: $('pauseRecBtn'), cancelRecBtn: $('cancelRecBtn'),
   // detail
   backBtn: $('backBtn'), titleInput: $('titleInput'), detailMeta: $('detailMeta'),
@@ -43,6 +45,12 @@ const state = {
   timerId: null,
   currentId: null, // detail view recording id
   capHours: 200,
+  saving: false,
+  liveCaption: true,
+  finalsEl: null, // container node for committed transcript segments
+  interimEl: null, // node showing the current interim text
+  interimRaf: 0,
+  insightsTimer: 0,
 };
 
 // ---------- utilities ----------
@@ -149,6 +157,12 @@ function resetRecordUI() {
   state.paused = false;
   state.pausedMs = 0;
   state._pendingLocation = '';
+  if (state.interimRaf) { cancelAnimationFrame(state.interimRaf); state.interimRaf = 0; }
+  if (state.insightsTimer) { clearTimeout(state.insightsTimer); state.insightsTimer = 0; }
+  state.finalsEl = null;
+  state.interimEl = null;
+  el.liveInsights.hidden = true;
+  el.liveInsightsBody.innerHTML = '';
   el.liveTranscript.innerHTML = '<span class="muted">녹음을 시작하면 실시간 전사가 여기에 표시됩니다.</span>';
   el.recTimer.textContent = '00:00';
   el.recStatus.textContent = '준비됨';
@@ -159,14 +173,67 @@ function resetRecordUI() {
   el.navRecord.classList.remove('recording');
 }
 
-function renderLive(interim = '') {
-  const parts = state.segments.map(
-    (s) => `<div class="seg"><span class="seg-time">${fmtClock(s.t)}</span>${escapeHtml(s.text)}</div>`
-  );
-  if (interim) parts.push(`<div class="seg interim">${escapeHtml(interim)}</div>`);
-  el.liveTranscript.innerHTML = parts.join('') ||
-    '<span class="muted">음성을 기다리는 중…</span>';
+// Build the live transcript container once, then append incrementally.
+// Rebuilding innerHTML on every interim result caused mobile jank.
+function initLiveTranscript() {
+  el.liveTranscript.innerHTML = '';
+  state.finalsEl = document.createElement('div');
+  state.interimEl = document.createElement('div');
+  state.interimEl.className = 'seg interim';
+  el.liveTranscript.appendChild(state.finalsEl);
+  el.liveTranscript.appendChild(state.interimEl);
+}
+
+function appendFinalSegment(seg) {
+  if (!state.finalsEl) return;
+  const div = document.createElement('div');
+  div.className = 'seg';
+  const t = document.createElement('span');
+  t.className = 'seg-time';
+  t.textContent = fmtClock(seg.t);
+  div.appendChild(t);
+  div.appendChild(document.createTextNode(seg.text));
+  state.finalsEl.appendChild(div);
   el.liveTranscript.scrollTop = el.liveTranscript.scrollHeight;
+}
+
+// Throttle interim updates to one paint per frame.
+function setInterim(txt) {
+  if (!state.interimEl) return;
+  if (state.interimRaf) return;
+  state.interimRaf = requestAnimationFrame(() => {
+    state.interimRaf = 0;
+    if (state.interimEl) state.interimEl.textContent = txt;
+    el.liveTranscript.scrollTop = el.liveTranscript.scrollHeight;
+  });
+}
+
+// Live "정리를 바로바로" — recompute a lightweight summary/timeline from the
+// segments captured so far, debounced so it never competes with capture.
+function scheduleLiveInsights() {
+  if (state.insightsTimer) return;
+  state.insightsTimer = setTimeout(() => {
+    state.insightsTimer = 0;
+    renderLiveInsights();
+  }, 1500);
+}
+
+function renderLiveInsights() {
+  if (!state.segments.length) { el.liveInsights.hidden = true; return; }
+  const s = localSummarize(state.segments);
+  const tl = (s.topics || []).slice(-3); // most recent blocks
+  const parts = [];
+  if (s.overview) parts.push(`<div class="li-over">${escapeHtml(s.overview)}</div>`);
+  for (const b of tl) {
+    parts.push(`<div class="li-tl"><span class="li-t">${fmtTime(b.t)}</span><span>${
+      b.topic ? `<span class="li-topic">${escapeHtml(b.topic)}</span> · ` : ''
+    }${escapeHtml(b.recap || '')}</span></div>`);
+  }
+  if (s.actionItems && s.actionItems.length) {
+    parts.push(`<div class="li-count">✅ 액션 아이템 ${s.actionItems.length}개 감지</div>`);
+  }
+  el.liveInsightsBody.innerHTML = parts.join('');
+  el.liveInsights.hidden = false;
 }
 
 function tickTimer() {
@@ -195,11 +262,21 @@ async function startRecording() {
   state.paused = false;
 
   // Live transcription (best-effort; audio is still saved if unsupported).
-  if (sttSupported()) {
+  // Skipped entirely in silent mode so no speech-engine chime is played.
+  if (!state.liveCaption) {
+    el.liveTranscript.innerHTML =
+      '<span class="muted">무음 모드입니다. 소리 없이 오디오만 녹음됩니다. (설정에서 실시간 자막을 켜면 자막·실시간 정리가 됩니다.)</span>';
+  } else if (sttSupported()) {
+    initLiveTranscript();
     state.transcriber = new Transcriber({
       lang,
-      onSegment: (seg) => { state.segments.push(seg); renderLive(); },
-      onInterim: (txt) => renderLive(txt),
+      onSegment: (seg) => {
+        state.segments.push(seg);
+        appendFinalSegment(seg);
+        if (state.interimEl) state.interimEl.textContent = '';
+        scheduleLiveInsights();
+      },
+      onInterim: (txt) => setInterim(txt),
       onError: (err) => {
         if (err === 'not-allowed' || err === 'service-not-allowed') {
           toast('음성 인식 권한이 거부되었습니다. 오디오만 저장됩니다.');
@@ -220,7 +297,6 @@ async function startRecording() {
   el.langSelect.disabled = true;
 
   state.timerId = setInterval(tickTimer, 250);
-  renderLive();
 }
 
 function pauseRecording() {
@@ -248,12 +324,16 @@ function resumeRecording() {
 }
 
 async function stopAndSave() {
-  if (!state.recording) return;
+  if (!state.recording || state.saving) return; // guard against double-taps
+  state.saving = true;
+
+  // Halt capture immediately so STOP feels instant.
   clearInterval(state.timerId);
+  if (state.transcriber) state.transcriber.stop();
+  if (state.insightsTimer) { clearTimeout(state.insightsTimer); state.insightsTimer = 0; }
+
   const durationSec = Math.max(1, Math.round((Date.now() - state.startTs - state.pausedMs) / 1000));
   const lang = el.langSelect.value;
-
-  if (state.transcriber) state.transcriber.stop();
   el.recStatus.textContent = '저장 중…';
   el.recStatus.classList.remove('live');
 
@@ -263,14 +343,12 @@ async function stopAndSave() {
   el.navRecord.classList.remove('recording');
 
   const segments = state.segments.slice();
-  const apiEndpoint = await db.getSetting('apiEndpoint');
-  const apiToken = await db.getSetting('apiToken');
-  const summary = await summarize(segments, { apiEndpoint, apiToken, language: lang });
-
-  const title = deriveTitle(segments, summary);
+  // Local summary is fast and synchronous — save with it right away so the
+  // app never blocks on a network call before showing the result.
+  const summary = localSummarize(segments);
   const rec = {
     id: uid(),
-    title,
+    title: deriveTitle(segments, summary),
     createdAt: Date.now(),
     durationSec,
     language: lang,
@@ -292,8 +370,30 @@ async function stopAndSave() {
 
   await refreshStorageIndicator();
   resetRecordUI();
+  state.saving = false;
   await renderList();
   openDetail(rec.id);
+
+  // If an AI summary server is configured, upgrade the summary in the
+  // background and refresh the view when it returns (non-blocking).
+  const apiEndpoint = await db.getSetting('apiEndpoint');
+  if (apiEndpoint && segments.length) {
+    const apiToken = await db.getSetting('apiToken');
+    toast('AI 요약 생성 중…');
+    summarize(segments, { apiEndpoint, apiToken, language: lang })
+      .then(async (ai) => {
+        if (!ai || ai.source !== 'ai') return;
+        const fresh = await db.getRecording(rec.id);
+        if (!fresh) return;
+        fresh.summary = ai;
+        if (!fresh.title || fresh.title === rec.title) fresh.title = deriveTitle(segments, ai);
+        await db.saveRecording(fresh);
+        if (state.currentId === rec.id) openDetail(rec.id);
+        renderList();
+        toast('AI 요약이 반영되었습니다.');
+      })
+      .catch(() => { /* keep the local summary on failure */ });
+  }
 }
 
 function cancelRecording() {
@@ -479,12 +579,14 @@ async function init() {
   const defaultLang = await db.getSetting('defaultLang');
   const apiEndpoint = await db.getSetting('apiEndpoint');
   const apiToken = await db.getSetting('apiToken');
+  state.liveCaption = await db.getSetting('liveCaption');
 
   fillLangSelect(el.langSelect, defaultLang);
   fillLangSelect(el.defaultLangSelect, defaultLang);
   el.capInput.value = state.capHours;
   el.apiEndpointInput.value = apiEndpoint || '';
   el.apiTokenInput.value = apiToken || '';
+  el.liveCaptionToggle.setAttribute('aria-checked', state.liveCaption ? 'true' : 'false');
 
   resetRecordUI();
   await renderList();
@@ -558,6 +660,12 @@ function wireEvents() {
   el.apiTokenInput.addEventListener('change', async () => {
     await db.setSetting('apiToken', el.apiTokenInput.value.trim());
     toast('접근 토큰이 저장되었습니다.');
+  });
+  el.liveCaptionToggle.addEventListener('click', async () => {
+    state.liveCaption = !state.liveCaption;
+    el.liveCaptionToggle.setAttribute('aria-checked', state.liveCaption ? 'true' : 'false');
+    await db.setSetting('liveCaption', state.liveCaption);
+    toast(state.liveCaption ? '실시간 자막을 켰습니다.' : '무음 모드 — 소리 없이 오디오만 녹음합니다.');
   });
   el.clearAllBtn.addEventListener('click', async () => {
     if (!confirm('모든 녹음을 삭제할까요? 되돌릴 수 없습니다.')) return;

@@ -58,10 +58,15 @@ export class Transcriber {
     };
 
     rec.onend = () => {
-      // Auto-restart while we intend to be running (recognition times out).
-      if (this.running) {
-        try { rec.start(); } catch (_) { /* already starting */ }
-      }
+      // Auto-restart while we intend to be running (recognition times out on
+      // mobile after each phrase). Debounce the restart: a tight start/stop
+      // loop makes the Android speech engine chime repeatedly.
+      if (!this.running) return;
+      if (this._restartTimer) return;
+      this._restartTimer = setTimeout(() => {
+        this._restartTimer = null;
+        if (this.running) { try { rec.start(); } catch (_) { /* already starting */ } }
+      }, 350);
     };
 
     this.recognition = rec;
@@ -71,7 +76,9 @@ export class Transcriber {
   pause() {
     this.pauseMark = Date.now();
     this.running = false;
-    if (this.recognition) try { this.recognition.stop(); } catch (_) {}
+    if (this._restartTimer) { clearTimeout(this._restartTimer); this._restartTimer = null; }
+    // abort() halts immediately without emitting a trailing result chime.
+    if (this.recognition) try { this.recognition.abort(); } catch (_) {}
   }
 
   resume() {
@@ -83,9 +90,14 @@ export class Transcriber {
 
   stop() {
     this.running = false;
+    if (this._restartTimer) { clearTimeout(this._restartTimer); this._restartTimer = null; }
     if (this.recognition) {
       this.recognition.onend = null;
-      try { this.recognition.stop(); } catch (_) {}
+      this.recognition.onresult = null;
+      // Prefer abort() over stop() — it ends instantly and avoids the
+      // end-of-recognition chime on mobile.
+      try { this.recognition.abort(); }
+      catch (_) { try { this.recognition.stop(); } catch (_) {} }
     }
   }
 }

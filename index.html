@@ -57,6 +57,11 @@
 
         <div class="live-transcript" id="liveTranscript" aria-live="polite"></div>
 
+        <div class="live-insights" id="liveInsights" hidden>
+          <div class="li-head">🧠 실시간 정리</div>
+          <div class="li-body" id="liveInsightsBody"></div>
+        </div>
+
         <div class="rec-controls">
           <button id="cancelRecBtn" class="round-btn secondary" title="취소">✕</button>
           <button id="recToggleBtn" class="round-btn record" title="녹음">
@@ -127,6 +132,14 @@
           <p class="muted">새 녹음의 기본 인식 언어입니다.</p>
         </div>
         <select id="defaultLangSelect" class="lang-select"></select>
+      </div>
+
+      <div class="setting-row">
+        <div>
+          <strong>실시간 자막(음성 인식)</strong>
+          <p class="muted">켜면 녹음 중 자막·실시간 정리가 됩니다. 일부 안드로이드 폰은 이때 시작/종료 알림음이 납니다. 끄면 소리 없이 오디오만 녹음됩니다.</p>
+        </div>
+        <button id="liveCaptionToggle" class="toggle" role="switch" aria-checked="true"><span class="knob"></span></button>
       </div>
 
       <div class="setting-row">

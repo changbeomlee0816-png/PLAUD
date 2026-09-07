@@ -84,6 +84,7 @@ const DEFAULTS = {
   defaultLang: 'ko-KR',
   apiEndpoint: '',
   apiToken: '',
+  liveCaption: true,
 };
 
 export async function getSetting(key) {

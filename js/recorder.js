@@ -97,34 +97,43 @@ export class AudioRecorder {
     resize();
     const buf = new Uint8Array(this.analyser.frequencyBinCount);
 
-    const draw = () => {
+    // Precompute the gradient once (recreating it per bar per frame is the
+    // single biggest cause of main-thread jank / unresponsive taps on phones).
+    const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+    grad.addColorStop(0, '#7c5cff');
+    grad.addColorStop(1, '#5b8cff');
+    ctx.fillStyle = grad;
+
+    const bars = 40;
+    const step = Math.max(1, Math.floor(buf.length / bars));
+    const FRAME_MS = 1000 / 30; // cap at ~30fps to leave the UI thread free
+    let last = 0;
+
+    const draw = (now) => {
       this.rafId = requestAnimationFrame(draw);
+      if (now - last < FRAME_MS) return;
+      last = now;
       this.analyser.getByteFrequencyData(buf);
       const w = canvas.width, h = canvas.height;
       ctx.clearRect(0, 0, w, h);
-      const bars = 48;
-      const step = Math.floor(buf.length / bars);
       const bw = w / bars;
+      ctx.beginPath(); // one path for all bars
       for (let i = 0; i < bars; i++) {
         const v = buf[i * step] / 255;
         const bh = Math.max(4 * dpr, v * h * 0.9);
         const x = i * bw;
         const y = (h - bh) / 2;
-        const grad = ctx.createLinearGradient(0, y, 0, y + bh);
-        grad.addColorStop(0, '#7c5cff');
-        grad.addColorStop(1, '#5b8cff');
-        ctx.fillStyle = grad;
         const r = Math.min(bw * 0.3, bh / 2);
-        roundRect(ctx, x + bw * 0.2, y, bw * 0.6, bh, r);
-        ctx.fill();
+        roundRectPath(ctx, x + bw * 0.2, y, bw * 0.6, bh, r);
       }
+      ctx.fill(); // single fill for all bars
     };
-    draw();
+    this.rafId = requestAnimationFrame(draw);
   }
 }
 
-function roundRect(ctx, x, y, w, h, r) {
-  ctx.beginPath();
+// Appends a rounded-rect subpath (no beginPath, so many can share one path).
+function roundRectPath(ctx, x, y, w, h, r) {
   ctx.moveTo(x + r, y);
   ctx.arcTo(x + w, y, x + w, y + h, r);
   ctx.arcTo(x + w, y + h, x, y + h, r);
