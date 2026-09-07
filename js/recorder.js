@@ -67,6 +67,14 @@ export class AudioRecorder {
     this._cleanup();
   }
 
+  // Resume the analyser's AudioContext after it was suspended by the browser
+  // (which happens whenever the tab is backgrounded / the screen turns off).
+  async resumeAudio() {
+    if (this.audioCtx && this.audioCtx.state === 'suspended') {
+      try { await this.audioCtx.resume(); } catch (_) { /* ignore */ }
+    }
+  }
+
   _cleanup() {
     cancelAnimationFrame(this.rafId);
     if (this.stream) this.stream.getTracks().forEach((t) => t.stop());

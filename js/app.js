@@ -14,6 +14,7 @@ const el = {
   // record
   langSelect: $('langSelect'), detectLangBtn: $('detectLangBtn'),
   waveCanvas: $('waveCanvas'), recTimer: $('recTimer'), recStatus: $('recStatus'),
+  recHint: $('recHint'),
   liveTranscript: $('liveTranscript'),
   liveInsights: $('liveInsights'), liveInsightsBody: $('liveInsightsBody'),
   liveCaptionToggle: $('liveCaptionToggle'),
@@ -51,6 +52,7 @@ const state = {
   interimEl: null, // node showing the current interim text
   interimRaf: 0,
   insightsTimer: 0,
+  wakeLock: null,
 };
 
 // ---------- utilities ----------
@@ -163,6 +165,7 @@ function resetRecordUI() {
   state.interimEl = null;
   el.liveInsights.hidden = true;
   el.liveInsightsBody.innerHTML = '';
+  el.recHint.hidden = true;
   el.liveTranscript.innerHTML = '<span class="muted">녹음을 시작하면 실시간 전사가 여기에 표시됩니다.</span>';
   el.recTimer.textContent = '00:00';
   el.recStatus.textContent = '준비됨';
@@ -241,6 +244,43 @@ function tickTimer() {
   el.recTimer.textContent = fmtClock(elapsed);
 }
 
+// --- Keep recording alive while unattended ---
+// The Screen Wake Lock keeps the display from auto-locking so capture keeps
+// running. The OS still releases it if the user force-locks the screen or
+// switches apps, so we re-acquire it whenever the page becomes visible again.
+async function acquireWakeLock() {
+  if (!('wakeLock' in navigator)) return;
+  try {
+    state.wakeLock = await navigator.wakeLock.request('screen');
+    state.wakeLock.addEventListener('release', () => { state.wakeLock = null; });
+  } catch (_) { state.wakeLock = null; }
+}
+
+async function releaseWakeLock() {
+  if (state.wakeLock) {
+    try { await state.wakeLock.release(); } catch (_) {}
+    state.wakeLock = null;
+  }
+}
+
+function setRecHint() {
+  const supported = 'wakeLock' in navigator;
+  el.recHint.innerHTML = supported
+    ? '🔒 <span class="ok">화면이 꺼지지 않도록 유지 중</span> — 녹음이 계속됩니다.<br>일부 폰은 전원 버튼으로 화면을 강제로 끄면 녹음이 멈출 수 있어요.'
+    : '이 브라우저는 화면 유지를 지원하지 않습니다. 녹음 중에는 화면을 켠 상태로 두세요.';
+  el.recHint.hidden = false;
+}
+
+// When returning to the foreground during a recording, re-acquire the wake
+// lock and resume the analyser context (both are dropped while backgrounded).
+async function onVisibilityChange() {
+  if (document.visibilityState !== 'visible') return;
+  if (state.recording && !state.paused) {
+    await acquireWakeLock();
+    if (state.recorder) await state.recorder.resumeAudio();
+  }
+}
+
 async function startRecording() {
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     toast('이 브라우저는 마이크 녹음을 지원하지 않습니다.');
@@ -296,6 +336,9 @@ async function startRecording() {
   el.navRecord.classList.add('recording');
   el.langSelect.disabled = true;
 
+  await acquireWakeLock();
+  setRecHint();
+
   state.timerId = setInterval(tickTimer, 250);
 }
 
@@ -306,6 +349,7 @@ function pauseRecording() {
   state.recorder.pause();
   if (state.transcriber) state.transcriber.pause();
   clearInterval(state.timerId);
+  releaseWakeLock(); // allow the screen to sleep while paused
   el.recStatus.textContent = '⏸ 일시정지';
   el.recStatus.classList.remove('live');
   el.pauseRecBtn.textContent = '▶';
@@ -317,6 +361,7 @@ function resumeRecording() {
   state.pausedMs += Date.now() - state.pauseStart;
   state.recorder.resume();
   if (state.transcriber) state.transcriber.resume();
+  acquireWakeLock();
   state.timerId = setInterval(tickTimer, 250);
   el.recStatus.textContent = '● 녹음 중';
   el.recStatus.classList.add('live');
@@ -331,6 +376,7 @@ async function stopAndSave() {
   clearInterval(state.timerId);
   if (state.transcriber) state.transcriber.stop();
   if (state.insightsTimer) { clearTimeout(state.insightsTimer); state.insightsTimer = 0; }
+  releaseWakeLock();
 
   const durationSec = Math.max(1, Math.round((Date.now() - state.startTs - state.pausedMs) / 1000));
   const lang = el.langSelect.value;
@@ -402,6 +448,7 @@ function cancelRecording() {
   clearInterval(state.timerId);
   if (state.transcriber) state.transcriber.stop();
   if (state.recorder) state.recorder.cancel();
+  releaseWakeLock();
   state.recording = false;
   el.langSelect.disabled = false;
   resetRecordUI();
@@ -629,6 +676,9 @@ function wireEvents() {
   });
   document.querySelectorAll('.tab').forEach((t) =>
     t.addEventListener('click', () => setTab(t.dataset.tab)));
+
+  // Re-acquire the wake lock / resume audio when returning to the foreground.
+  document.addEventListener('visibilitychange', onVisibilityChange);
 
   // Storage pill → settings
   el.storageBtn.addEventListener('click', openSettings);
