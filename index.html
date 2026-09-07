@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#0b0d12" />
+  <meta name="description" content="회의·발표 현장을 녹음하고 타임라인과 요약으로 정리하는 AI 녹음 앱" />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="./icons/icon-192.png" />
+  <link rel="stylesheet" href="./css/styles.css" />
+  <title>Recall · AI 녹음</title>
+</head>
+<body>
+  <div id="app">
+    <!-- Top bar -->
+    <header class="topbar">
+      <div class="brand">
+        <span class="logo">◉</span>
+        <div>
+          <h1>Recall</h1>
+          <p class="tagline">현장을 타임라인으로</p>
+        </div>
+      </div>
+      <button id="storageBtn" class="storage-pill" title="저장 용량">
+        <span id="storageText">0h</span>
+        <span class="storage-sub">/ 200h</span>
+      </button>
+    </header>
+
+    <!-- Views -->
+    <main class="content">
+      <!-- LIST VIEW -->
+      <section id="listView" class="view active">
+        <div id="listEmpty" class="empty">
+          <div class="empty-emoji">🎙️</div>
+          <h2>아직 녹음이 없어요</h2>
+          <p>아래 버튼을 눌러 첫 회의를 기록해 보세요.</p>
+        </div>
+        <ul id="recordingList" class="rec-list"></ul>
+      </section>
+
+      <!-- RECORD VIEW -->
+      <section id="recordView" class="view">
+        <div class="record-lang">
+          <label for="langSelect">인식 언어</label>
+          <select id="langSelect" class="lang-select"></select>
+          <button id="detectLangBtn" class="ghost-btn" title="위치 기반 언어 추천">📍 위치로 추천</button>
+        </div>
+
+        <div class="rec-stage">
+          <div id="waveWrap" class="wave">
+            <canvas id="waveCanvas"></canvas>
+          </div>
+          <div id="recTimer" class="rec-timer">00:00</div>
+          <div id="recStatus" class="rec-status">준비됨</div>
+        </div>
+
+        <div class="live-transcript" id="liveTranscript" aria-live="polite"></div>
+
+        <div class="rec-controls">
+          <button id="cancelRecBtn" class="round-btn secondary" title="취소">✕</button>
+          <button id="recToggleBtn" class="round-btn record" title="녹음">
+            <span class="rec-dot"></span>
+          </button>
+          <button id="pauseRecBtn" class="round-btn secondary" title="일시정지" disabled>⏸</button>
+        </div>
+      </section>
+
+      <!-- DETAIL VIEW -->
+      <section id="detailView" class="view">
+        <div class="detail-head">
+          <button id="backBtn" class="ghost-btn">‹ 목록</button>
+          <div class="detail-actions">
+            <button id="reLangBtn" class="ghost-btn" title="다른 언어로 다시 정리">🌐 언어변경</button>
+            <button id="deleteBtn" class="ghost-btn danger" title="삭제">🗑</button>
+          </div>
+        </div>
+        <input id="titleInput" class="title-input" placeholder="제목 없음" />
+        <div id="detailMeta" class="detail-meta"></div>
+
+        <audio id="player" class="player" controls></audio>
+
+        <nav class="tabs">
+          <button class="tab active" data-tab="summary">요약</button>
+          <button class="tab" data-tab="timeline">타임라인</button>
+          <button class="tab" data-tab="transcript">전문</button>
+        </nav>
+
+        <div id="tabSummary" class="tab-panel active"></div>
+        <div id="tabTimeline" class="tab-panel"></div>
+        <div id="tabTranscript" class="tab-panel"></div>
+      </section>
+    </main>
+
+    <!-- Bottom nav / FAB -->
+    <nav class="bottom-nav">
+      <button id="navList" class="nav-item active">📁<span>보관함</span></button>
+      <button id="navRecord" class="fab" title="녹음 시작">
+        <span class="fab-icon">●</span>
+      </button>
+      <button id="navSettings" class="nav-item">⚙️<span>설정</span></button>
+    </nav>
+  </div>
+
+  <!-- Settings sheet -->
+  <div id="settingsSheet" class="sheet" hidden>
+    <div class="sheet-panel">
+      <div class="sheet-head">
+        <h3>설정</h3>
+        <button id="closeSettings" class="ghost-btn">닫기</button>
+      </div>
+
+      <div class="setting-row">
+        <div>
+          <strong>총 저장 한도</strong>
+          <p class="muted">한도를 넘으면 가장 오래된 녹음부터 자동 삭제됩니다.</p>
+        </div>
+        <div class="cap-control">
+          <input id="capInput" type="number" min="1" max="1000" step="1" />
+          <span>시간</span>
+        </div>
+      </div>
+
+      <div class="setting-row">
+        <div>
+          <strong>기본 언어</strong>
+          <p class="muted">새 녹음의 기본 인식 언어입니다.</p>
+        </div>
+        <select id="defaultLangSelect" class="lang-select"></select>
+      </div>
+
+      <div class="setting-row">
+        <div>
+          <strong>AI 요약 서버 (선택)</strong>
+          <p class="muted">비워두면 오프라인 요약을 사용합니다.</p>
+        </div>
+      </div>
+      <input id="apiEndpointInput" class="text-input" placeholder="https://your-summary-api/endpoint" />
+
+      <div class="usage-bar-wrap">
+        <div class="usage-head">
+          <span>사용 중</span>
+          <span id="usageDetail">0h / 200h</span>
+        </div>
+        <div class="usage-bar"><div id="usageFill" class="usage-fill"></div></div>
+      </div>
+
+      <button id="clearAllBtn" class="danger-btn">전체 녹음 삭제</button>
+      <p class="muted center version">Recall · 온디바이스 녹음 · v1.0</p>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script type="module" src="./js/app.js"></script>
+</body>
+</html>
