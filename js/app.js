@@ -25,7 +25,8 @@ const el = {
   // settings
   settingsSheet: $('settingsSheet'), closeSettings: $('closeSettings'),
   capInput: $('capInput'), defaultLangSelect: $('defaultLangSelect'),
-  apiEndpointInput: $('apiEndpointInput'), usageDetail: $('usageDetail'), usageFill: $('usageFill'),
+  apiEndpointInput: $('apiEndpointInput'), apiTokenInput: $('apiTokenInput'),
+  usageDetail: $('usageDetail'), usageFill: $('usageFill'),
   clearAllBtn: $('clearAllBtn'),
   toast: $('toast'),
 };
@@ -263,7 +264,8 @@ async function stopAndSave() {
 
   const segments = state.segments.slice();
   const apiEndpoint = await db.getSetting('apiEndpoint');
-  const summary = await summarize(segments, { apiEndpoint, language: lang });
+  const apiToken = await db.getSetting('apiToken');
+  const summary = await summarize(segments, { apiEndpoint, apiToken, language: lang });
 
   const title = deriveTitle(segments, summary);
   const rec = {
@@ -416,8 +418,9 @@ async function reSummarizeInLanguage() {
 
   const newLang = LANGUAGES[idx].code;
   const apiEndpoint = await db.getSetting('apiEndpoint');
+  const apiToken = await db.getSetting('apiToken');
   rec.language = newLang;
-  rec.summary = await summarize(rec.segments || [], { apiEndpoint, language: newLang });
+  rec.summary = await summarize(rec.segments || [], { apiEndpoint, apiToken, language: newLang });
   await db.saveRecording(rec);
   toast(`${LANGUAGES[idx].label}(으)로 다시 정리했습니다.`);
   openDetail(rec.id);
@@ -475,11 +478,13 @@ async function init() {
   state.capHours = await db.getSetting('capHours');
   const defaultLang = await db.getSetting('defaultLang');
   const apiEndpoint = await db.getSetting('apiEndpoint');
+  const apiToken = await db.getSetting('apiToken');
 
   fillLangSelect(el.langSelect, defaultLang);
   fillLangSelect(el.defaultLangSelect, defaultLang);
   el.capInput.value = state.capHours;
   el.apiEndpointInput.value = apiEndpoint || '';
+  el.apiTokenInput.value = apiToken || '';
 
   resetRecordUI();
   await renderList();
@@ -549,6 +554,10 @@ function wireEvents() {
   el.apiEndpointInput.addEventListener('change', async () => {
     await db.setSetting('apiEndpoint', el.apiEndpointInput.value.trim());
     toast('요약 서버 설정이 저장되었습니다.');
+  });
+  el.apiTokenInput.addEventListener('change', async () => {
+    await db.setSetting('apiToken', el.apiTokenInput.value.trim());
+    toast('접근 토큰이 저장되었습니다.');
   });
   el.clearAllBtn.addEventListener('click', async () => {
     if (!confirm('모든 녹음을 삭제할까요? 되돌릴 수 없습니다.')) return;

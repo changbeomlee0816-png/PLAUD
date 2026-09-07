@@ -179,12 +179,14 @@ export function localSummarize(segments) {
 }
 
 // Public: summarize, using remote API if configured, else local.
-export async function summarize(segments, { apiEndpoint, language } = {}) {
+export async function summarize(segments, { apiEndpoint, apiToken, language } = {}) {
   if (apiEndpoint) {
     try {
+      const headers = { 'Content-Type': 'application/json' };
+      if (apiToken) headers['Authorization'] = `Bearer ${apiToken}`;
       const res = await fetch(apiEndpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           language,
           transcript: segments.map((s) => ({ t: s.t, text: s.text })),

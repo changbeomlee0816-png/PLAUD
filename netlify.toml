@@ -1,0 +1,22 @@
+# Netlify configuration — static site served from the repository root.
+# Deploy: connect the repo in the Netlify dashboard, or run `netlify deploy --prod`.
+[build]
+  publish = "."
+  command = ""
+
+# Long-cache the immutable assets, but always revalidate the service worker
+# and app shell so updates roll out.
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "no-cache"
+
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "no-cache"
+
+[[headers]]
+  for = "/manifest.webmanifest"
+  [headers.values]
+    Cache-Control = "no-cache"

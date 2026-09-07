@@ -26,6 +26,26 @@ npx serve .
 브라우저에서 `http://localhost:8080` 접속.
 폰에서 테스트하려면 HTTPS 배포(예: GitHub Pages, Netlify, Vercel)가 필요합니다 — 정적 파일 그대로 올리면 됩니다.
 
+## 배포 (폰에서 쓰기)
+
+마이크·음성인식은 HTTPS에서만 동작하므로, 폰에서 쓰려면 정적 호스팅에 올려야 합니다. 저장소 전체가 정적 사이트(루트에 `index.html`)라 아래 셋 중 아무거나 그대로 됩니다.
+
+### 방법 A — GitHub Pages (설정 포함됨)
+
+`.github/workflows/deploy-pages.yml` 워크플로우가 포함되어 있습니다.
+
+1. 저장소 **Settings → Pages → Build and deployment → Source = "GitHub Actions"** 선택
+2. `main` 또는 `claude/recording-ai-app-izqo84` 브랜치에 푸시하면 자동 배포 (Actions 탭에서 진행 상황 확인)
+3. 배포 URL: `https://<사용자명>.github.io/<저장소명>/`
+
+### 방법 B — Netlify
+
+`netlify.toml` 포함. 대시보드에서 저장소 연결만 하면 됩니다(빌드 명령 없음, publish = 루트). 또는 CLI: `netlify deploy --prod`
+
+### 방법 C — Vercel
+
+`vercel.json` 포함. `vercel` 대시보드에서 저장소 import 하거나 CLI: `vercel --prod` (프레임워크 없음/정적).
+
 ### 폰에 설치 (PWA)
 
 1. 모바일 브라우저(Chrome/Safari)로 배포 URL 접속
@@ -43,9 +63,12 @@ npx serve .
 
 ## AI 요약 서버 연동 (선택)
 
-기본값은 **온디바이스(오프라인) 요약**입니다. 더 정교한 요약을 원하면 설정에서 요약 서버 엔드포인트를 지정하세요.
+기본값은 **온디바이스(오프라인) 요약**입니다. 설정에서 요약 서버 엔드포인트(+선택적 접근 토큰)를 지정하면 **자동으로 LLM 기반 요약으로 전환**되고, 서버 호출이 실패하면 오프라인 요약으로 폴백합니다.
 
-- 요청: `POST {endpoint}` — `{ "language": "...", "transcript": [{ "t": 0, "text": "..." }] }`
+API 계약:
+
+- 요청: `POST {endpoint}` — `{ "language": "ko-KR", "transcript": [{ "t": 0, "text": "..." }] }`
+  - 접근 토큰을 설정하면 `Authorization: Bearer <token>` 헤더가 함께 전송됩니다.
 - 응답(JSON):
   ```json
   {
@@ -55,9 +78,46 @@ npx serve .
     "topics": [{ "t": 0, "topic": "예산", "recap": "..." }]
   }
   ```
-- 실패 시 자동으로 오프라인 요약으로 폴백합니다.
 
-> 이 앱은 API 키를 코드에 저장하지 않습니다. LLM 연동은 사용자가 운영하는 프록시/서버 엔드포인트를 통해 붙이세요.
+> 앱은 Anthropic API 키를 저장하지 않습니다. 키는 아래 서버 함수의 환경변수로만 보관됩니다.
+
+## Supabase Edge Function (Anthropic 요약)
+
+`supabase/functions/summarize/` 에 위 API 계약을 만족하는 **Anthropic 기반 서버리스 요약 함수**가 포함되어 있습니다. Claude로 개요·핵심 요점·액션 아이템·타임라인을 생성합니다.
+
+### 배포
+
+```bash
+# 1) Supabase CLI 설치 후 프로젝트 연결
+supabase link --project-ref <your-project-ref>
+
+# 2) 시크릿 설정 (앱에는 절대 넣지 않음)
+supabase secrets set ANTHROPIC_API_KEY=sk-ant-...
+# 선택: 공개 남용을 막는 공유 토큰 (앱 설정의 '접근 토큰'과 동일하게)
+supabase secrets set SUMMARIZE_SHARED_SECRET=$(openssl rand -hex 24)
+# 선택: 모델/CORS 오리진
+supabase secrets set SUMMARY_MODEL=claude-opus-5
+supabase secrets set ALLOWED_ORIGIN=https://<사용자명>.github.io
+
+# 3) 배포
+supabase functions deploy summarize
+```
+
+배포 후 엔드포인트: `https://<project-ref>.functions.supabase.co/summarize`
+이 URL을 앱 **설정 → AI 요약 서버**에 넣고, `SUMMARIZE_SHARED_SECRET`을 설정했다면 **접근 토큰**에 같은 값을 넣으세요.
+
+### 환경변수
+
+| 변수 | 필수 | 설명 |
+|------|------|------|
+| `ANTHROPIC_API_KEY` | ✅ | Anthropic API 키 |
+| `SUMMARY_MODEL` | | 기본 `claude-opus-5`. 비용을 낮추려면 `claude-sonnet-5` 또는 `claude-haiku-4-5` |
+| `SUMMARIZE_SHARED_SECRET` | | 설정 시 `Authorization: Bearer <값>` 필요 (공개 남용 방지 권장) |
+| `ALLOWED_ORIGIN` | | CORS 허용 오리진. 기본 `*` (배포 도메인으로 좁히는 것을 권장) |
+
+로컬 테스트: `supabase functions serve summarize` → `http://localhost:54321/functions/v1/summarize`
+
+> 다른 플랫폼(Vercel/Cloudflare Functions 등)에서도 같은 요청/응답 계약만 지키면 그대로 연동됩니다. `supabase/functions/summarize/index.ts`가 참고 구현입니다.
 
 ## 프로젝트 구조
 
@@ -73,6 +133,13 @@ js/i18n.js                 언어 목록 + 위치/시간대→언어 추천
 manifest.webmanifest       PWA 매니페스트
 sw.js                      오프라인 캐시 서비스워커
 icons/                     앱 아이콘
+supabase/
+  config.toml              Supabase 프로젝트 설정 (summarize: verify_jwt=false)
+  functions/summarize/     Anthropic 기반 요약 Edge Function (Deno)
+.github/workflows/
+  deploy-pages.yml         GitHub Pages 자동 배포
+netlify.toml               Netlify 정적 배포 설정
+vercel.json                Vercel 정적 배포 설정
 ```
 
 ## 데이터·프라이버시

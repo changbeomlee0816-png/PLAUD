@@ -1,0 +1,10 @@
+# Supabase project configuration.
+# Replace project_id with your project ref (Dashboard → Project Settings → General),
+# or run `supabase link --project-ref <ref>`.
+project_id = "your-project-ref"
+
+# The summarize function is called directly from the browser app, so it does
+# not require a Supabase JWT. Access is instead gated by the optional
+# SUMMARIZE_SHARED_SECRET (see the function source).
+[functions.summarize]
+verify_jwt = false

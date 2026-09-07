@@ -83,6 +83,7 @@ const DEFAULTS = {
   capHours: 200,
   defaultLang: 'ko-KR',
   apiEndpoint: '',
+  apiToken: '',
 };
 
 export async function getSetting(key) {
